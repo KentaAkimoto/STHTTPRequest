@@ -16,6 +16,7 @@
 
 NSUInteger const kSTHTTPRequestCancellationError = 1;
 NSUInteger const kSTHTTPRequestDefaultTimeout = 30;
+NSString* const kSTHTTPRequestStreamTempOutputFile = @"sthttprequest_stream_output.dat";
 
 static NSMutableDictionary *localCredentialsStorage = nil;
 static NSMutableArray *localCookiesStorage = nil;
@@ -26,6 +27,7 @@ static NSMutableArray *localCookiesStorage = nil;
 @property (nonatomic, retain) NSString *path;
 @property (nonatomic, retain) NSString *parameterName;
 @property (nonatomic, retain) NSString *mimeType;
+@property (nonatomic, assign) BOOL multipart;
 
 + (instancetype)fileUploadWithPath:(NSString *)path parameterName:(NSString *)parameterName mimeType:(NSString *)mimeType;
 + (instancetype)fileUploadWithPath:(NSString *)path parameterName:(NSString *)parameterName;
@@ -383,7 +385,7 @@ static NSMutableArray *localCookiesStorage = nil;
     // sort POST parameters in order to get deterministic, unit testable requests
     NSArray *sortedPOSTDictionaries = [[self class] dictionariesSortedByKey:_POSTDictionary];
     
-    if([self.filesToUpload count] > 0 || [self.dataToUpload count] > 0 || self.streamFileToUpload != nil) {
+    if([self.filesToUpload count] > 0 || [self.dataToUpload count] > 0 || (self.streamFileToUpload != nil && self.streamFileToUpload.multipart)) {
         
         NSString *boundary = @"----------kStHtTpReQuEsTbOuNdArY";
         
@@ -445,7 +447,7 @@ static NSMutableArray *localCookiesStorage = nil;
             [request setHTTPBody:body];
             
         } else {
-            // Stream
+            // Stream & multipart
             
             NSInputStream *inputStream = nil;
             
@@ -460,32 +462,70 @@ static NSMutableArray *localCookiesStorage = nil;
                                                                       mimeType:fileToUpload.mimeType];
             [body appendData:multipartData];
             
-            // 終端
+            // end position
             NSMutableData *endBody = [NSMutableData alloc];
             [endBody appendData:[[NSString stringWithFormat:@"\r\n--%@--\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
 
+            NSString *outputFilePath = [NSTemporaryDirectory() stringByAppendingPathComponent:kSTHTTPRequestStreamTempOutputFile];
+            
+            // initialize
+            if ([NSFileManager.defaultManager fileExistsAtPath:outputFilePath]) {
+                [NSFileManager.defaultManager removeItemAtPath:outputFilePath error:nil];
+            }
+            [NSFileManager.defaultManager createFileAtPath:outputFilePath contents:[NSData data] attributes:nil];
+            
+            NSFileHandle *outputFileHandle = [NSFileHandle fileHandleForWritingAtPath:outputFilePath];
+
             // append first byte
-            NSFileHandle *fileHandle = [NSFileHandle fileHandleForWritingAtPath:fileToUpload.path];
-            [fileHandle seekToFileOffset:0];
-            [fileHandle writeData:body];
+            [outputFileHandle seekToFileOffset:0];
+            [outputFileHandle writeData:body];
+            
+            // append target file
+            NSFileHandle *fileHandle = [NSFileHandle fileHandleForReadingAtPath:[fileToUpload path]];
+            [fileHandle seekToEndOfFile];
+            unsigned long long fileLength = [fileHandle offsetInFile];
+            unsigned long long currentOffset = 0;
+            while (currentOffset < fileLength) {
+                @autoreleasepool {
+                    [fileHandle seekToFileOffset:currentOffset];
+                    NSData *chunkOfData = [fileHandle readDataOfLength:32768]; // about 32KB
+                    [outputFileHandle writeData:chunkOfData];
+                    currentOffset += chunkOfData.length;
+                }
+            }
             
             // append end byte
-            [fileHandle seekToEndOfFile];
-            [fileHandle writeData:endBody];
-            [fileHandle closeFile];
+            [outputFileHandle seekToEndOfFile];
+            [outputFileHandle writeData:endBody];
+            [outputFileHandle closeFile];
             
-            inputStream = [[NSInputStream alloc] initWithFileAtPath:fileToUpload.path];
+            inputStream = [[NSInputStream alloc] initWithFileAtPath:outputFilePath];
             //        inputStream = [[HSCountingInputStream alloc] initWithInputStream:[[NSInputStream alloc]initWithFileAtPath:fileToUpload.path]];
             
-            NSFileManager *fm = [NSFileManager defaultManager];
-            NSDictionary *attribute = [fm attributesOfItemAtPath:fileToUpload.path error:nil];
+            NSDictionary *attribute = [NSFileManager.defaultManager attributesOfItemAtPath:outputFilePath error:nil];
             NSNumber *fileSize = [attribute objectForKey:NSFileSize];
             
             [request setValue:[NSString stringWithFormat:@"%u", (unsigned int)[fileSize integerValue]] forHTTPHeaderField:@"Content-Length"];
-            
             [request setHTTPBodyStream:inputStream];
+            
         }
         
+    } else if (self.streamFileToUpload && self.streamFileToUpload.multipart == NO) {
+        // Stream & Raw
+        
+        if(_HTTPMethod == nil) [request setHTTPMethod:@"POST"];
+        
+        NSInputStream *inputStream = nil;
+        
+        STHTTPRequestFileUpload *fileToUpload = self.streamFileToUpload;
+        inputStream = [[NSInputStream alloc] initWithFileAtPath:fileToUpload.path];
+        
+        NSDictionary *attribute = [NSFileManager.defaultManager attributesOfItemAtPath:fileToUpload.path error:nil];
+        NSNumber *fileSize = [attribute objectForKey:NSFileSize];
+        
+        [request setValue:[NSString stringWithFormat:@"%u", (unsigned int)[fileSize integerValue]] forHTTPHeaderField:@"Content-Length"];
+        [request setHTTPBodyStream:inputStream];
+
     } else if (_rawPOSTData) {
         
         if(_HTTPMethod == nil) [request setHTTPMethod:@"POST"];
@@ -550,6 +590,13 @@ static NSMutableArray *localCookiesStorage = nil;
 }
 
 #pragma mark Upload
+
+- (void)addRawStreamFileToUpload:(NSString *)path parameterName:(NSString *)parameterName {
+    
+    STHTTPRequestFileUpload *fu = [STHTTPRequestFileUpload fileUploadWithPath:path parameterName:parameterName];
+    fu.multipart = NO; // raw post
+    self.streamFileToUpload = fu;
+}
 
 - (void)addStreamFileToUpload:(NSString *)path parameterName:(NSString *)parameterName {
     
@@ -773,8 +820,13 @@ static NSMutableArray *localCookiesStorage = nil;
     }
 
     STHTTPRequestFileUpload *f = self.streamFileToUpload;
-    [ms appendString:@"UPLOAD STREAM FILE\n"];
-    [ms appendFormat:@"\t %@ = %@\n", f.parameterName, f.path];
+    if (f && f.multipart) {
+        [ms appendString:@"UPLOAD STREAM FILE\n"];
+        [ms appendFormat:@"\t %@ = %@\n", f.parameterName, f.path];
+    } else if (f && f.multipart == NO) {
+        [ms appendString:@"UPLOAD RAW STREAM FILE\n"];
+        [ms appendFormat:@"\t %@ = %@\n", f.parameterName, f.path];
+    }
     
     for(STHTTPRequestFileUpload *f in self.filesToUpload) {
         [ms appendString:@"UPLOAD FILE\n"];
@@ -957,6 +1009,11 @@ static NSMutableArray *localCookiesStorage = nil;
 
 - (void)connectionDidFinishLoading:(NSURLConnection *)connection {
     
+    NSString *outputFilePath = [NSTemporaryDirectory() stringByAppendingPathComponent:kSTHTTPRequestStreamTempOutputFile];
+    if ([NSFileManager.defaultManager fileExistsAtPath:outputFilePath isDirectory:nil]) {
+        [NSFileManager.defaultManager removeItemAtPath:outputFilePath error:nil];
+    }
+    
     if(_responseStatus >= 400) {
         NSDictionary *userInfo = [[self class] userInfoWithErrorDescriptionForHTTPStatus:_responseStatus];
         self.error = [NSError errorWithDomain:NSStringFromClass([self class]) code:_responseStatus userInfo:userInfo];
@@ -977,6 +1034,12 @@ static NSMutableArray *localCookiesStorage = nil;
 }
 
 - (void)connection:(NSURLConnection *)connection didFailWithError:(NSError *)e {
+    
+    NSString *outputFilePath = [NSTemporaryDirectory() stringByAppendingPathComponent:kSTHTTPRequestStreamTempOutputFile];
+    if ([NSFileManager.defaultManager fileExistsAtPath:outputFilePath isDirectory:nil]) {
+        [NSFileManager.defaultManager removeItemAtPath:outputFilePath error:nil];
+    }
+    
     self.error = e;
     _errorBlock(_error);
 }
@@ -1035,6 +1098,7 @@ static NSMutableArray *localCookiesStorage = nil;
     fu.path = path;
     fu.parameterName = parameterName;
     fu.mimeType = mimeType;
+    fu.multipart = YES;
     return fu;
 }
 
