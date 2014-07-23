@@ -50,6 +50,7 @@ static NSMutableArray *localCookiesStorage = nil;
 @property (nonatomic, retain) NSDictionary *responseHeaders;
 @property (nonatomic, retain) NSURL *url;
 @property (nonatomic, retain) NSError *error;
+@property (nonatomic, retain) STHTTPRequestFileUpload *streamFileToUpload;
 @property (nonatomic, retain) NSMutableArray *filesToUpload; // STHTTPRequestFileUpload instances
 @property (nonatomic, retain) NSMutableArray *dataToUpload; // STHTTPRequestDataUpload instances
 @property (nonatomic, retain) NSURLRequest *request;
@@ -83,6 +84,7 @@ static NSMutableArray *localCookiesStorage = nil;
         self.encodePOSTDictionary = YES;
         self.addCredentialsToURL = NO;
         self.timeoutSeconds = kSTHTTPRequestDefaultTimeout;
+        self.streamFileToUpload = nil;
         self.filesToUpload = [NSMutableArray array];
         self.dataToUpload = [NSMutableArray array];
         // self.HTTPMethod = @"GET"; // default
@@ -335,8 +337,10 @@ static NSMutableArray *localCookiesStorage = nil;
     
     [data appendData:[contentDisposition dataUsingEncoding:NSUTF8StringEncoding]];
     [data appendData:[[NSString stringWithFormat:@"Content-Type: %@\r\n\r\n", mimeType] dataUsingEncoding:NSUTF8StringEncoding]];
-    [data appendData:someData];
-    [data appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    if (someData != nil) {
+        [data appendData:someData];
+        [data appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    }
     
     return data;
 }
@@ -379,7 +383,7 @@ static NSMutableArray *localCookiesStorage = nil;
     // sort POST parameters in order to get deterministic, unit testable requests
     NSArray *sortedPOSTDictionaries = [[self class] dictionariesSortedByKey:_POSTDictionary];
     
-    if([self.filesToUpload count] > 0 || [self.dataToUpload count] > 0) {
+    if([self.filesToUpload count] > 0 || [self.dataToUpload count] > 0 || self.streamFileToUpload != nil) {
         
         NSString *boundary = @"----------kStHtTpReQuEsTbOuNdArY";
         
@@ -427,14 +431,60 @@ static NSMutableArray *localCookiesStorage = nil;
             [body appendData:[[NSString stringWithFormat:@"Content-Disposition: form-data; name=\"%@\"\r\n\r\n", key] dataUsingEncoding:NSUTF8StringEncoding]];
             [body appendData:[[value description] dataUsingEncoding:NSUTF8StringEncoding]];
         }];
-        
+
+        [body appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+
         /**/
         
-        [body appendData:[[NSString stringWithFormat:@"\r\n--%@--\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
-        
         if(_HTTPMethod == nil) [request setHTTPMethod:@"POST"];
-        [request setValue:[NSString stringWithFormat:@"%u", (unsigned int)[body length]] forHTTPHeaderField:@"Content-Length"];
-        [request setHTTPBody:body];
+        
+        if (self.streamFileToUpload == nil) {
+            [body appendData:[[NSString stringWithFormat:@"\r\n--%@--\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+            [request setValue:[NSString stringWithFormat:@"%u", (unsigned int)[body length]] forHTTPHeaderField:@"Content-Length"];
+
+            [request setHTTPBody:body];
+            
+        } else {
+            // Stream
+            
+            NSInputStream *inputStream = nil;
+            
+            STHTTPRequestFileUpload *fileToUpload = self.streamFileToUpload;
+            
+            NSString *fileName = [fileToUpload.path lastPathComponent];
+            
+            NSData *multipartData = [[self class] multipartContentWithBoundary:boundary
+                                                                          data:nil
+                                                                      fileName:fileName
+                                                                 parameterName:fileToUpload.parameterName
+                                                                      mimeType:fileToUpload.mimeType];
+            [body appendData:multipartData];
+            
+            // 終端
+            NSMutableData *endBody = [NSMutableData alloc];
+            [endBody appendData:[[NSString stringWithFormat:@"\r\n--%@--\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+
+            // append first byte
+            NSFileHandle *fileHandle = [NSFileHandle fileHandleForWritingAtPath:fileToUpload.path];
+            [fileHandle seekToFileOffset:0];
+            [fileHandle writeData:body];
+            
+            // append end byte
+            [fileHandle seekToEndOfFile];
+            [fileHandle writeData:endBody];
+            [fileHandle closeFile];
+            
+            inputStream = [[NSInputStream alloc] initWithFileAtPath:fileToUpload.path];
+            //        inputStream = [[HSCountingInputStream alloc] initWithInputStream:[[NSInputStream alloc]initWithFileAtPath:fileToUpload.path]];
+            
+            NSFileManager *fm = [NSFileManager defaultManager];
+            NSDictionary *attribute = [fm attributesOfItemAtPath:fileToUpload.path error:nil];
+            NSNumber *fileSize = [attribute objectForKey:NSFileSize];
+            
+            [request setValue:[NSString stringWithFormat:@"%u", (unsigned int)[fileSize integerValue]] forHTTPHeaderField:@"Content-Length"];
+            
+            [request setHTTPBodyStream:inputStream];
+        }
         
     } else if (_rawPOSTData) {
         
@@ -500,6 +550,12 @@ static NSMutableArray *localCookiesStorage = nil;
 }
 
 #pragma mark Upload
+
+- (void)addStreamFileToUpload:(NSString *)path parameterName:(NSString *)parameterName {
+    
+    STHTTPRequestFileUpload *fu = [STHTTPRequestFileUpload fileUploadWithPath:path parameterName:parameterName];
+    self.streamFileToUpload = fu;
+}
 
 - (void)addFileToUpload:(NSString *)path parameterName:(NSString *)parameterName {
     
@@ -685,7 +741,7 @@ static NSMutableArray *localCookiesStorage = nil;
     
     NSMutableString *ms = [NSMutableString string];
     
-    NSString *method = (self.POSTDictionary || [self.filesToUpload count] || [self.dataToUpload count]) ? @"POST" : @"GET";
+    NSString *method = (self.POSTDictionary || self.streamFileToUpload || [self.filesToUpload count] || [self.dataToUpload count]) ? @"POST" : @"GET";
     
     [ms appendFormat:@"%@ %@\n", method, [_request URL]];
     
@@ -715,6 +771,10 @@ static NSMutableArray *localCookiesStorage = nil;
         NSString *v = [[kv allValues] lastObject];
         [ms appendFormat:@"\t %@ = %@\n", k, v];
     }
+
+    STHTTPRequestFileUpload *f = self.streamFileToUpload;
+    [ms appendString:@"UPLOAD STREAM FILE\n"];
+    [ms appendFormat:@"\t %@ = %@\n", f.parameterName, f.path];
     
     for(STHTTPRequestFileUpload *f in self.filesToUpload) {
         [ms appendString:@"UPLOAD FILE\n"];

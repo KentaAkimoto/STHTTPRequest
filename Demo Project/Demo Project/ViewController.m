@@ -23,7 +23,7 @@
 
 - (IBAction)buttonClicked:(id)sender {
     
-#if 1
+#if 0
     [_activityIndicator startAnimating];
     
     _fetchButton.enabled = NO;
@@ -115,18 +115,48 @@
         [_activityIndicator stopAnimating];
     }
 #endif
-    
+
 #if 0
     __block STHTTPRequest *up = [STHTTPRequest requestWithURLString:@"http://127.0.0.1:81/"];
     
-//    NSString *s = [@"s&df" stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+    //    NSString *s = [@"s&df" stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
     NSLog(@"-- %@", [self urlEncodedString]);
     
     up.POSTDictionary = @{@"asd":@"&&", @"dfg":@"fg&h"};
     
-//    NSData *data = [[[NSData alloc] initWithContentsOfFile:@"/tmp/photo.jpg"] autorelease];
-//    
-//    [up setDataToUpload:data parameterName:@"XXX"];
+    //    NSData *data = [[[NSData alloc] initWithContentsOfFile:@"/tmp/photo.jpg"] autorelease];
+    //
+    //    [up setDataToUpload:data parameterName:@"XXX"];
+    
+    up.uploadProgressBlock = ^(NSInteger bytesWritten, NSInteger totalBytesWritten, NSInteger totalBytesExpectedToWrite) {
+        NSLog(@"-- %d / %d / %d", bytesWritten, totalBytesWritten, totalBytesExpectedToWrite);
+    };
+    
+    up.completionBlock = ^(NSDictionary *headers, NSString *body) {
+        NSLog(@"-- body: %@", body);
+        [_activityIndicator stopAnimating];
+    };
+    
+    up.errorBlock = ^(NSError *error) {
+        NSLog(@"-- %@", [error localizedDescription]);
+        [_activityIndicator stopAnimating];
+    };
+    
+    [up startAsynchronous];
+    
+}
+
+#endif
+    
+#if 1
+    __block STHTTPRequest *up = [STHTTPRequest requestWithURLString:@"http://macbookair.local:8185/post_stream.php"];
+    
+    NSLog(@"-- %@", [self urlEncodedString]);
+    
+    up.POSTDictionary = @{@"asd":@"&&", @"dfg":@"fg&h"};
+    
+    NSString *file = [[NSBundle mainBundle] pathForResource:@"miyu" ofType:@"jpeg"];
+    [up addStreamFileToUpload:file parameterName:@"upfile"];
     
     up.uploadProgressBlock = ^(NSInteger bytesWritten, NSInteger totalBytesWritten, NSInteger totalBytesExpectedToWrite) {
         NSLog(@"-- %d / %d / %d", bytesWritten, totalBytesWritten, totalBytesExpectedToWrite);
@@ -149,12 +179,12 @@
 - (NSString *)urlEncodedString {
     // https://dev.twitter.com/docs/auth/percent-encoding-parameters
     
-    NSString *s = (NSString *)CFURLCreateStringByAddingPercentEscapes(kCFAllocatorDefault,
+    NSString *s = (NSString *)CFBridgingRelease(CFURLCreateStringByAddingPercentEscapes(kCFAllocatorDefault,
                                                                       (CFStringRef)@"a&d",
                                                                       NULL,
                                                                       CFSTR("!*'();:@&=+$,/?%#[]"),
-                                                                      kCFStringEncodingUTF8);
-    return [s autorelease];
+                                                                      kCFStringEncodingUTF8));
+    return s;
 #endif
 
 }

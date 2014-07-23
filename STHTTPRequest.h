@@ -89,6 +89,7 @@ typedef void (^errorBlock_t)(NSError *error);
 - (NSDictionary *)responseHeaders;
 
 // Upload
+- (void)addStreamFileToUpload:(NSString *)path parameterName:(NSString *)param;
 - (void)addFileToUpload:(NSString *)path parameterName:(NSString *)param;
 - (void)addDataToUpload:(NSData *)data parameterName:(NSString *)param;
 - (void)addDataToUpload:(NSData *)data parameterName:(NSString *)param mimeType:(NSString *)mimeType fileName:(NSString *)fileName;

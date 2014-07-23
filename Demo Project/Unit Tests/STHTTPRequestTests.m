@@ -73,7 +73,7 @@
     
     STHTTPRequest *r = [STHTTPRequest requestWithURLString:@"http://www.google.com"];
     
-    r.downloadProgressBlock = ^(NSData *data, NSInteger totalBytesReceived, NSInteger totalBytesExpectedToReceive) {
+    r.downloadProgressBlock = ^(NSData *data, NSUInteger totalBytesReceived, long long totalBytesExpectedToReceive) {
         NSLog(@"-- %@", data);
     };
     
