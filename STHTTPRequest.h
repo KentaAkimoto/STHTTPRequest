@@ -90,7 +90,7 @@ typedef void (^errorBlock_t)(NSError *error);
 
 // Upload
 - (void)addRawStreamFileToUpload:(NSString *)path parameterName:(NSString *)parameterName;
-- (void)addStreamFileToUpload:(NSString *)path parameterName:(NSString *)param;
+- (void)addStreamFileToUpload:(NSString *)path parameterName:(NSString *)param chunkSize:(NSUInteger)chunkSize;
 - (void)addFileToUpload:(NSString *)path parameterName:(NSString *)param;
 - (void)addDataToUpload:(NSData *)data parameterName:(NSString *)param;
 - (void)addDataToUpload:(NSData *)data parameterName:(NSString *)param mimeType:(NSString *)mimeType fileName:(NSString *)fileName;

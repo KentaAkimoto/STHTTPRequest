@@ -28,6 +28,7 @@ static NSMutableArray *localCookiesStorage = nil;
 @property (nonatomic, retain) NSString *parameterName;
 @property (nonatomic, retain) NSString *mimeType;
 @property (nonatomic, assign) BOOL multipart;
+@property (nonatomic, assign) NSUInteger chunkSize;
 
 + (instancetype)fileUploadWithPath:(NSString *)path parameterName:(NSString *)parameterName mimeType:(NSString *)mimeType;
 + (instancetype)fileUploadWithPath:(NSString *)path parameterName:(NSString *)parameterName;
@@ -488,7 +489,7 @@ static NSMutableArray *localCookiesStorage = nil;
             while (currentOffset < fileLength) {
                 @autoreleasepool {
                     [fileHandle seekToFileOffset:currentOffset];
-                    NSData *chunkOfData = [fileHandle readDataOfLength:32768]; // about 32KB
+                    NSData *chunkOfData = [fileHandle readDataOfLength:fileToUpload.chunkSize];
                     [outputFileHandle writeData:chunkOfData];
                     currentOffset += chunkOfData.length;
                 }
@@ -598,9 +599,10 @@ static NSMutableArray *localCookiesStorage = nil;
     self.streamFileToUpload = fu;
 }
 
-- (void)addStreamFileToUpload:(NSString *)path parameterName:(NSString *)parameterName {
+- (void)addStreamFileToUpload:(NSString *)path parameterName:(NSString *)parameterName chunkSize:(NSUInteger)chunkSize {
     
     STHTTPRequestFileUpload *fu = [STHTTPRequestFileUpload fileUploadWithPath:path parameterName:parameterName];
+    fu.chunkSize = chunkSize;
     self.streamFileToUpload = fu;
 }
 
@@ -1099,6 +1101,7 @@ static NSMutableArray *localCookiesStorage = nil;
     fu.parameterName = parameterName;
     fu.mimeType = mimeType;
     fu.multipart = YES;
+    fu.chunkSize = 32768; // about 32KB
     return fu;
 }
 

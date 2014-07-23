@@ -150,14 +150,15 @@
     
 #if 1
     __block STHTTPRequest *up = [STHTTPRequest requestWithURLString:@"http://macbookair.local:8185/post_stream.php"];
-    
+    up.timeoutSeconds = 60;
     NSLog(@"-- %@", [self urlEncodedString]);
     
     up.POSTDictionary = @{@"asd":@"&&", @"dfg":@"fg&h"};
     
-    NSString *file = [[NSBundle mainBundle] pathForResource:@"miyu" ofType:@"jpeg"];
-    [up addStreamFileToUpload:file parameterName:@"upfile"];
-    
+    NSString *file = [[NSBundle mainBundle] pathForResource:@"untitled-prezi-lwodydzhqzlz" ofType:@"zip"];
+    [up addStreamFileToUpload:file parameterName:nil chunkSize:1024000];
+    //[up addRawStreamFileToUpload:file parameterName:@"upfile"];
+
     up.uploadProgressBlock = ^(NSInteger bytesWritten, NSInteger totalBytesWritten, NSInteger totalBytesExpectedToWrite) {
         NSLog(@"-- %d / %d / %d", bytesWritten, totalBytesWritten, totalBytesExpectedToWrite);
     };
